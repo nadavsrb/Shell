@@ -18,9 +18,12 @@
 #define EMPTY 0
 
 #define CD_COMMAND "cd"
-#define HISTORY_COMMAND "cd"
-#define JOBS_COMMAND "cd"
+#define HISTORY_COMMAND "history"
+#define JOBS_COMMAND "jobs"
 #define EXIT_COMMAND "exit"
+
+#define RUNNING_STR "RUNNING"
+#define DONE_STR "DONE"
 
 #define EXEC_ERROR_MASSAGE "exec failed"
 #define FORK_ERROR_MASSAGE "fork failed"
@@ -47,12 +50,14 @@ typedef struct
     Bool isRunning;
     char comStr[COMMAND_MAX_CHARS + 1]; //+ 1 for NULL in the end
 }Command;
-
-typedef struct 
+struct BGRunningCommand
 {
     Command* com;
     pid_t processID;
-}BGRunningCommand;
+    struct BGRunningCommand* next;
+};
+
+typedef struct BGRunningCommand BGRunningCommand;
 
 typedef struct 
 {
@@ -63,7 +68,9 @@ typedef struct
 typedef struct 
 {
     BGRunningCommand bgRunningComs[COMMAND_MAX_NUM];
-    int size;
+    BGRunningCommand* end;
+    BGRunningCommand* start;
+    int nextIndex;
 }BGRunning;
 
 void printShell() {
@@ -78,15 +85,6 @@ int string_ends_with(const char * str, const char * suffix)
 
   return (str_len >= suffix_len) &&
     (0 == strcmp(str + (str_len-suffix_len), suffix));
-}
-
-int string_starts_with(const char *str, const char *pre)
-{
-    int str_len = strlen(str);
-    int pre_len = strlen(pre);
-
-  return (str_len >= pre_len) &&
-    (0 == strncmp(str, pre, pre_len));
 }
 
 void getCommand(History* history, Command* com) {
@@ -104,13 +102,11 @@ void getCommand(History* history, Command* com) {
     }
 }
 
-int isExitCommand(Command* com) {
-    return (strcmp(EXIT_COMMAND, com->comStr) == 0);
-}
-
 void killAllBGProcess(BGRunning* bgRunning) {
-    for(int i = 0; i < bgRunning->size; ++i){
-        kill(bgRunning->bgRunningComs[i].processID, SIGKILL);
+    BGRunningCommand *bgCom = bgRunning->start;
+    while(bgCom != NULL){
+        kill(bgCom->processID, SIGKILL);
+        bgCom = bgCom->next;
     }
 }
 
@@ -137,21 +133,6 @@ void handleStatus(Status status) {
     }
 
     printf("%s\n", massage); 
-}
-void doFGCommand(char* args[]){
-    pid_t sonPID;
-
-    if((sonPID = fork()) == -1) { //fork failed
-        handleStatus(FORK_ERROR);
-        return;
-    } else if (sonPID == 0){ // we are the son process
-        execvp(args[0], args);
-        handleStatus(EXEC_ERROR);
-
-        exit(0);
-    }
-
-    waitpid(sonPID, NULL, 0);
 }
 
 void getArgs(char* args[], char strArgs[]) {
@@ -188,7 +169,7 @@ void getArgs(char* args[], char strArgs[]) {
             ++iterSrc;
             continue;
         }
-        
+
         if(*iterSrc == BACKSLASH_CHAR || isInSpecialChar) {
             isInSpecialChar = !isInSpecialChar;
         }
@@ -203,113 +184,132 @@ void getArgs(char* args[], char strArgs[]) {
     ++indexNextArg;
     args[indexNextArg] = NULL; //end of args
 }
-void doCommand(Command* com, History* history, BGRunning* bgRunning) {
+
+void doFGCommand(char* args[]){
+    pid_t sonPID;
+
+    if((sonPID = fork()) == -1) { //fork failed
+        handleStatus(FORK_ERROR);
+        return;
+    } else if (sonPID == 0){ // we are the son process
+        execvp(args[0], args);
+        handleStatus(EXEC_ERROR);
+
+        exit(0);
+    }
+    // we are the father
+    waitpid(sonPID, NULL, 0);
+}
+
+void doBGCommand(char* args[], BGRunning* bgRunning, Command* com){
+    pid_t sonPID;
+
+    if((sonPID = fork()) == -1) { //fork failed
+        handleStatus(FORK_ERROR);
+        com->isRunning = False;
+        return;
+    
+    } else if (sonPID == 0){ // we are the son process
+        execvp(args[0], args);
+        handleStatus(EXEC_ERROR);
+
+        exit(0);
+    }
+
+    BGRunningCommand* thisCom = &bgRunning->bgRunningComs[bgRunning->nextIndex];
+    thisCom->com = com;
+    thisCom->processID = sonPID;
+    thisCom->next = NULL;
+    ++bgRunning->nextIndex;
+
+    if(bgRunning->start == NULL){
+        bgRunning->start = thisCom;
+    }
+
+    if(bgRunning->end != NULL) {
+        bgRunning->end->next = thisCom;
+    }
+    bgRunning->end = thisCom;
+}
+
+void updateBgRunning(BGRunning* bgRunning){
+    BGRunningCommand* beforeBGCom = NULL;
+    BGRunningCommand* BGCom = bgRunning->start;
+
+    while (BGCom != NULL){
+        pid_t pidSon = waitpid(BGCom->processID, NULL, WNOHANG);
+
+        if(pidSon != 0) {//the process is dead
+            BGCom->com->isRunning = False;
+            if(beforeBGCom == NULL){
+                bgRunning->start = BGCom->next;
+            } else {
+                beforeBGCom->next = BGCom->next;
+            }
+
+            if(BGCom->next == NULL) {
+                bgRunning->end = beforeBGCom;
+            }
+        }
+
+        beforeBGCom = BGCom;
+        BGCom = BGCom->next;
+    }
+    
+}
+
+void doJobsCommand(BGRunning* bgRunning){
+    BGRunningCommand *bgCom = bgRunning->start;
+    while(bgCom != NULL){
+        printf("%s\n", bgCom->com->comStr);
+        bgCom = bgCom->next;
+    }
+}
+
+void doHistoryCommand(History* history){
+    for(int i = 0; i < history->size; ++i) {
+        printf("%s ", history->coms[i]->comStr);
+
+        if (history->coms[i]->isRunning) {
+            printf(RUNNING_STR);
+        } else {
+            printf(DONE_STR);
+        }
+
+        printf("\n"); 
+    }
+}
+void doCommand(Command* com, History* history, BGRunning* bgRunning, Bool* isExitCommand) {
+    //get the args
     char* args[COMMAND_MAX_CHARS + 1]; //+1 for the NULL in the end if needed
     char strArgs[COMMAND_MAX_CHARS + 1]; //+1 for the NULL in the end if needed
     strcpy(strArgs, com->comStr);
     getArgs(args, strArgs);
-    // //get the args:
-    // int i = 0;
-    // printf(".............|%s|\n", com->comStr);////////
-    // char comStr[COMMAND_MAX_CHARS + 1] , *word;
-    // strcpy(comStr, com->comStr);
-    // char* endComStr = comStr + strlen(comStr);
-    // word = strtok(comStr, SPACE);
-    // char* args[COMMAND_MAX_CHARS + 1]; //+1 for the NULL in the end if needed
 
-    // while (word != NULL) {
-    //     if(string_starts_with(word, QUOTE)){
-    //         ++word;
-    //         char* endWord = word + strlen(word);
-    //         if(endComStr != endWord) {
-    //             *(endWord) = SPACE_CHAR;
-    //         }
-    //         printf("%s.....\n", word);/////
-    //         char* phrase = strtok(word, QUOTE);
-    //         if(phrase == NULL) {// everything ends with """"
-    //             break;
-    //         }
-    //         printf("%s,%s.....\n", word, word + 2);/////
-    //         char* endPhrase = phrase + strlen(phrase) - 1;
-    //         while(*endPhrase == BACKSLASH_CHAR && (endPhrase + 1) < endComStr){
-    //             if(strtok(NULL, QUOTE) == NULL){ //so in the end we have only "
-    //                 *(endPhrase + 2) = '\0';
-    //             }
-    //             printf("%s,%s.....\n", word, word + 2);/////
-    //             *(++endPhrase) = QUOTE_CHAR;
-    //             endPhrase = phrase + strlen(phrase) - 1;
-    //             printf("%s.....\n", word);/////
-    //         }
-    //         args[i] = word;
-    //         char* contChars = endPhrase + 2;// endPhrase + 2 its the chars after the phrase
-    //         if(contChars < endComStr){
-    //             word = strtok(contChars, SPACE);
-    //         } else {
-    //             word = NULL;
-    //         }
-    //         ++i;
-
-    //         continue;
-    //     }
-        
-        // if(string_ends_with(word, BACKSLASH)){
-        //     char* endWord = word + strlen(word) - 1;
-
-        //     while(*endWord == BACKSLASH_CHAR && (endWord + 1) < endComStr) {
-        //         strtok(NULL, SPACE);
-        //         *(++endWord) = SPACE_CHAR;
-        //         endWord = word + strlen(word) - 1;
-        //     }
-        // }
-
-    //     args[i] = word;
-    //     word = strtok(NULL, SPACE);
-    //     ++i;
-    // }
-    // args[i] = NULL;
-
-
-    //     //get the args:
-    // int i = 0;
-    // char *quoteStrtok, *spaceStrtok;
-    // char* token = strtok_r(com->comStr, QUOTE, &quoteStrtok);
-    // char* args[COMMAND_MAX_CHARS + 1]; //+1 for the NULL in the end if needed
-
-    // Bool isInQuotes = False;
-    // while (token != NULL) {
-    //     if(isInQuotes){
-    //         args[i] = token;
-    //         ++i;
-    //     }else {
-    //         char* word = strtok_r(token, SPACE, &spaceStrtok);
-    //         while (word != NULL){
-    //             args[i] = word;
-    //             word = strtok_r(NULL, SPACE, &spaceStrtok);
-    //             ++i;
-    //         }
-            
-    //     }
-    //     token = strtok_r(NULL, QUOTE, &quoteStrtok);
-    //     isInQuotes = !isInQuotes;
-    // }
-    // args[i] = NULL;
-
+///////
     for(int j = 0; args[j] != NULL; ++j) {
         printf("|%s|\n", args[j]);
     }
+//////
 
     //do the command
-    if(strcmp(args[0], CD_COMMAND) == 0){
+    if(strcmp(args[0], EXIT_COMMAND) == 0){
+        killAllBGProcess(bgRunning);
+        *isExitCommand = True;
+
+    }else if(strcmp(args[0], CD_COMMAND) == 0){
         //doCdCommand();
         com->isRunning = False;
     }else if (strcmp(args[0], HISTORY_COMMAND) == 0){
-        //doHistoryCommand();
+        updateBgRunning(bgRunning);
+        doHistoryCommand(history);
         com->isRunning = False;
     }else if (strcmp(args[0], JOBS_COMMAND) == 0){
-        //doJobsCommand();
+        updateBgRunning(bgRunning);
+        doJobsCommand(bgRunning);
         com->isRunning = False;
     }else if(com->isBGCommand){
-        //doBGCommand();
+        doBGCommand(args, bgRunning, com);
     }else{
         doFGCommand(args);
         com->isRunning = False;
@@ -322,21 +322,22 @@ int main(int argc, char const *argv[]) {
     history.size = EMPTY;
 
     BGRunning bgRunning;
-    bgRunning.size = EMPTY;
+    bgRunning.nextIndex = EMPTY;
+    bgRunning.end = NULL;
+    bgRunning.start = NULL;
 
+    Bool isExitCommand = False;
+    Command com[COMMAND_MAX_NUM];
+    int indexCom = 0;
     do{
         printShell();
 
-        Command com;
-        getCommand(&history, &com);
-        
-        if(isExitCommand(&com)) {
-            killAllBGProcess(&bgRunning);
-            break;
-        }
+        getCommand(&history, &com[indexCom]);
 
-        doCommand(&com, &history, &bgRunning);
-    } while(True);
+        doCommand(&com[indexCom], &history, &bgRunning, &isExitCommand);
+
+        ++indexCom;
+    } while(!isExitCommand);
 
     return 0;
 }
