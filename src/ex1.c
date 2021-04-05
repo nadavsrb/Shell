@@ -1,4 +1,5 @@
 // Nadav Sharabi 213056153
+
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -6,16 +7,24 @@
 #include <string.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <pwd.h>
 
 #define SHELL_SIGN "$ "
 #define COMMAND_MAX_CHARS 100
 #define COMMAND_MAX_NUM 100
 #define SPACE_CHAR ' '
+#define HOME_PATH "~"
 #define QUOTE_CHAR '\"'
 #define BACKSLASH_CHAR '\\'
+#define SLASH_CHAR '/'
+#define SLASH_STR "/"
 #define END_STR_CHAR '\0'
+#define TILDE "~"
+#define HYPHEN "-"
 #define BG_SIGN " &"
 #define EMPTY 0
+#define MAX_CD_ARGS 2
+#define HOME_ENV_STR "HOME"
 
 #define CD_COMMAND "cd"
 #define HISTORY_COMMAND "history"
@@ -268,17 +277,79 @@ void doJobsCommand(BGRunning* bgRunning){
 
 void doHistoryCommand(History* history){
     for(int i = 0; i < history->size; ++i) {
-        printf("%s ", history->coms[i]->comStr);
-
-        if (history->coms[i]->isRunning) {
-            printf(RUNNING_STR);
-        } else {
-            printf(DONE_STR);
+        char* status = RUNNING_STR;
+        if (!history->coms[i]->isRunning) {
+            status = DONE_STR;
         }
 
-        printf("\n"); 
+        printf("%s %s\n", history->coms[i]->comStr, status); 
     }
 }
+
+int getArgsLength(char* args[]) {
+    int length = 0;
+    while(args[length] != NULL){
+        ++length;
+    }
+
+    return length;
+}
+
+void doCdCommand(char* args[]){
+    static char lastPath[COMMAND_MAX_CHARS + 1] = "";
+
+    int length = getArgsLength(args);
+    if(length > MAX_CD_ARGS){
+        handleStatus(CD_ARGS_ERROR);
+        return;
+    }
+
+    char* pathArg = args[1];
+    if(length != MAX_CD_ARGS) {
+        pathArg = HOME_PATH;
+    }
+
+    char *homeDirPath;
+    if ((homeDirPath = getenv(HOME_ENV_STR)) == NULL) {
+        homeDirPath = getpwuid(getuid())->pw_dir;
+    }
+
+    char path[COMMAND_MAX_CHARS + 1] = "";
+
+    if(*pathArg == SLASH_CHAR){
+        *path = SPACE_CHAR;
+        *(path + 1) = END_STR_CHAR; 
+    }
+
+    char* token = strtok(pathArg, SLASH_STR);
+    while(token != NULL){
+        char* partDir = token;
+        if(strcmp(partDir, TILDE) == 0){
+            strcat(path, homeDirPath);
+        }else if(strcmp(partDir, HYPHEN) == 0){
+            strcat(path, lastPath);
+        } else {
+            strcat(path, partDir);
+        }
+
+        strcat(path, SLASH_STR);
+        token = strtok(NULL, SLASH_STR);
+    }
+
+    char currentPath[COMMAND_MAX_CHARS + 1];
+    if(getcwd(currentPath, COMMAND_MAX_CHARS + 1) == NULL) {
+        handleStatus(UNKNOWN_ERROR);
+        return;
+    }
+
+    if(chdir(path) == -1){
+        handleStatus(CHDIR_ERROR);
+        return;
+    }
+
+    strcpy(lastPath, currentPath);
+}
+
 void doCommand(Command* com, History* history, BGRunning* bgRunning, Bool* isExitCommand) {
     //get the args
     char* args[COMMAND_MAX_CHARS + 1]; //+1 for the NULL in the end if needed
@@ -286,19 +357,13 @@ void doCommand(Command* com, History* history, BGRunning* bgRunning, Bool* isExi
     strcpy(strArgs, com->comStr);
     getArgs(args, strArgs);
 
-///////
-    for(int j = 0; args[j] != NULL; ++j) {
-        printf("|%s|\n", args[j]);
-    }
-//////
-
     //do the command
     if(strcmp(args[0], EXIT_COMMAND) == 0){
         killAllBGProcess(bgRunning);
         *isExitCommand = True;
 
     }else if(strcmp(args[0], CD_COMMAND) == 0){
-        //doCdCommand();
+        doCdCommand(args);
         com->isRunning = False;
     }else if (strcmp(args[0], HISTORY_COMMAND) == 0){
         updateBgRunning(bgRunning);
