@@ -13,13 +13,13 @@
 #define COMMAND_MAX_CHARS 100
 #define COMMAND_MAX_NUM 100
 #define SPACE_CHAR ' '
-#define HOME_PATH "~"
+#define TILDE_CHAR '~'
+#define TILDE "~"
+#define SLASH_STR "/"
 #define QUOTE_CHAR '\"'
 #define BACKSLASH_CHAR '\\'
-#define SLASH_CHAR '/'
-#define SLASH_STR "/"
 #define END_STR_CHAR '\0'
-#define TILDE "~"
+#define HOME_STR "~/"
 #define HYPHEN "-"
 #define BG_SIGN " &"
 #define EMPTY 0
@@ -94,6 +94,13 @@ int string_ends_with(const char * str, const char * suffix)
 
   return (str_len >= suffix_len) &&
     (0 == strcmp(str + (str_len-suffix_len), suffix));
+}
+
+int string_starts_with( const char *str, const char *pre)
+{
+    size_t lenpre = strlen(pre),
+           lenstr = strlen(str);
+    return lenstr < lenpre ? 0 : memcmp(pre, str, lenpre) == 0;
 }
 
 void getCommand(History* history, Command* com) {
@@ -276,7 +283,8 @@ void doJobsCommand(BGRunning* bgRunning){
 }
 
 void doHistoryCommand(History* history){
-    for(int i = 0; i < history->size; ++i) {
+    int i;
+    for(i = 0; i < history->size; ++i) {
         char* status = RUNNING_STR;
         if (!history->coms[i]->isRunning) {
             status = DONE_STR;
@@ -306,7 +314,7 @@ void doCdCommand(char* args[]){
 
     char* pathArg = args[1];
     if(length != MAX_CD_ARGS) {
-        pathArg = HOME_PATH;
+        pathArg = TILDE;
     }
 
     char *homeDirPath;
@@ -316,24 +324,16 @@ void doCdCommand(char* args[]){
 
     char path[COMMAND_MAX_CHARS + 1] = "";
 
-    if(*pathArg == SLASH_CHAR){
-        *path = SPACE_CHAR;
-        *(path + 1) = END_STR_CHAR; 
-    }
-
-    char* token = strtok(pathArg, SLASH_STR);
-    while(token != NULL){
-        char* partDir = token;
-        if(strcmp(partDir, TILDE) == 0){
-            strcat(path, homeDirPath);
-        }else if(strcmp(partDir, HYPHEN) == 0){
-            strcat(path, lastPath);
-        } else {
-            strcat(path, partDir);
-        }
-
+    if(strcmp(pathArg, HYPHEN) == 0){
+        strcpy(path, lastPath);
+    }else if(strcmp(pathArg, TILDE) == 0) {
+        strcpy(path, homeDirPath);
+    }else if(string_starts_with(pathArg, HOME_STR)){
+        strcpy(path, homeDirPath);
         strcat(path, SLASH_STR);
-        token = strtok(NULL, SLASH_STR);
+        strcat(path, pathArg + 2);
+    }else{
+        strcpy(path, pathArg);
     }
 
     char currentPath[COMMAND_MAX_CHARS + 1];
