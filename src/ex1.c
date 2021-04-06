@@ -158,7 +158,8 @@ void getCommand(History* history, Command* com) {
     com->isRunning = True;
 
     //reads from the shell the command (reads until end of line).
-    scanf(" %[^'\n']s", com->comStr);
+    fgets(com->comStr, COMMAND_MAX_CHARS + 1 , stdin);
+    com->comStr[strlen(com->comStr) - 1] = END_STR_CHAR; //removing '\n' char from the end.
 
     //checks if this command should run in the background.
     if(string_ends_with(com->comStr, BG_SIGN)){
