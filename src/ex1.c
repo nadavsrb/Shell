@@ -573,7 +573,7 @@ void doCommand(Command* com, History* history, BGRunning* bgRunning, Bool* isExi
 /**
  * @brief this is a shell program.
  */
-void main() {
+int main() {
     //initialize the command database.
     History history;
     history.size = EMPTY;
@@ -603,4 +603,6 @@ void main() {
         ++indexCom;
 
     } while(!isExitCommand);//check if should exit shell.
+
+    return 0; //exit shell.
 }
