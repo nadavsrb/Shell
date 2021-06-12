@@ -158,8 +158,13 @@ void getCommand(History* history, Command* com) {
     com->isRunning = True;
 
     //reads from the shell the command (reads until end of line).
-    fgets(com->comStr, COMMAND_MAX_CHARS + 1 , stdin);
-    com->comStr[strlen(com->comStr) - 1] = END_STR_CHAR; //removing '\n' char from the end.
+    do{
+        //prints the shell.
+        printShell();
+
+        fgets(com->comStr, COMMAND_MAX_CHARS + 1 , stdin);
+        com->comStr[strlen(com->comStr) - 1] = END_STR_CHAR; //removing '\n' char from the end.
+    }while(com->comStr[0] == '\0'); //if we got empty string we will wait to the next commaned
 
     //checks if this command should run in the background.
     if(string_ends_with(com->comStr, BG_SIGN)){
@@ -591,9 +596,6 @@ int main() {
 
     Bool isExitCommand = False;
     do{
-        //prints the shell.
-        printShell();
-
         //gets the next command.
         getCommand(&history, &com[indexCom]);
 
