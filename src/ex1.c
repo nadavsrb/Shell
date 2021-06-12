@@ -164,7 +164,7 @@ void getCommand(History* history, Command* com) {
 
         fgets(com->comStr, COMMAND_MAX_CHARS + 1 , stdin);
         com->comStr[strlen(com->comStr) - 1] = END_STR_CHAR; //removing '\n' char from the end.
-    }while(com->comStr[0] == '\0'); //if we got empty string we will wait to the next commaned
+    }while(com->comStr[0] == END_STR_CHAR); //if we got empty string we will wait to the next commaned
 
     //checks if this command should run in the background.
     if(string_ends_with(com->comStr, BG_SIGN)){
